@@ -1,6 +1,7 @@
 import csv
 import re
 import uuid
+import decimal
 
 from os import path
 from pya2l import DB, model
@@ -53,15 +54,18 @@ tables_in_xml = {
 
 categories = []
 
+# create a new context for this task
+ctx = decimal.Context()
+ctx.prec = 20
 
 def xml_root_with_configuration(title):
     root = Element("ecus")
 
     xmlheader = SubElement(root, "ecu_struct")
     xmlheader.set('id',str(title).rstrip(".a2l").lstrip(".\\"))
-    xmlheader.set('type',str(title).rstrip(".a2l").lstrip(".\\"))
+    xmlheader.set('type',str(title).rstrip(".a2l").lstrip(".\\")+" FULL")
     xmlheader.set('include',"")
-    xmlheader.set('desc_size',"#7FC00")
+    xmlheader.set('desc_size',"#400000")
     xmlheader.set('reverse_bytes',"False")
     xmlheader.set('ecu_type',"vag")
     xmlheader.set('flash_template',"")
@@ -128,7 +132,7 @@ def calc_map_size(characteristic: inspect.Characteristic):
 
 
 def adjust_address(address):
-    return address - BASE_OFFSET
+    return address - BASE_OFFSET + 0x200000
 
 
 # A2L to "normal" conversion methods
@@ -168,32 +172,46 @@ def axis_ref_to_dict(axis_ref: inspect.AxisDescr):
 
 def coefficients_to_equation(coefficients, inverse):
     a, b, c, d, e, f = (
-        str(coefficients["a"]),
-        str(coefficients["b"]),
-        str(coefficients["c"]),
-        str(coefficients["d"]),
-        str(coefficients["e"]),
-        str(coefficients["f"]),
+        float_to_str(coefficients["a"]),
+        float_to_str(coefficients["b"]),
+        float_to_str(coefficients["c"]),
+        float_to_str(coefficients["d"]),
+        float_to_str(coefficients["e"]),
+        float_to_str(coefficients["f"]),
     )
 
+    s1 = '+'
+    s2 = '-'
+    if c[0] == '-':
+        c = c[1:]
+        s1 = '-'
+        s2 = '+'
+        
     operation = ""
     if inverse is True:
-        operation = f"({b} * ([x] / {f})) + {c}"
-    else:
-        operation = f"(({f} * [x]) - {c}) / {b}"
+        operation = f"({b} * ([x] / {f})) {s1} {c}"
+    else:  
+        operation = f"(({f} * [x]) {s2} {c}) / {b}"
         
     if a == "0.0" and d == "0.0" and e=="0.0" and f!="0.0":  # Polynomial is of order 1, ie linear original: f"(({f} * [x]) - {c} ) / ({b} - ({e} * [x]))"
         return operation
     else:
         return "Cannot handle polynomial ratfunc because we do not know how to invert!"
 
+def float_to_str(f):
+    """
+    Convert the given float to a string,
+    without resorting to scientific notation
+    """
+    d1 = ctx.create_decimal(repr(f))
+    return format(d1, 'f')
 
 # Begin
 
 root, xmlheader = xml_root_with_configuration(argv[1])
 
 with open(argv[2], encoding="utf-8-sig") as csvfile:
-    print("Enhance...")
+    print("Smooth Tune...in progress...")
     csvreader = csv.DictReader(csvfile)
     for row in csvreader:
         tablename = row["Table Name"]
@@ -230,22 +248,11 @@ with open(argv[2], encoding="utf-8-sig") as csvfile:
         }
 
         if custom_name is not None and len(custom_name) > 0:
-            table_def["description"] += f'|Original Name: {table_def["title"]}'
+            # table_def["description"] += f'|Original Name: {table_def["title"]}'
             table_def["title"] = custom_name
 
-        duplicate = 0
-        check_title = table_def["title"]
-        while check_title in tables_in_xml:
-            duplicate += 1
-            check_title += " "
-
-        tables_in_xml[check_title] = True
-        if check_title != table_def["title"]:
-            id_name = table_def["description"]
-            table_def["title"] += f" [{id_name}]" #f" {duplicate}"
-            #print(table_def["title"])
-        
-        tables_in_xml[table_def["title"]] = True
+        id_name = table_def["description"]
+        table_def["title"] += f" ({id_name})"
         
 
         if category2 is not None and len(category2) > 0:
@@ -277,4 +284,4 @@ with open(argv[2], encoding="utf-8-sig") as csvfile:
 
         table = xml_table_with_root(xmlheader, table_def)
 
-ElementTree(root).write(f"{argv[1]}.xml")
+ElementTree(root).write(f"{argv[1]}.FULL.xml")
